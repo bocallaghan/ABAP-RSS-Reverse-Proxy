@@ -1,0 +1,89 @@
+  method IF_HTTP_EXTENSION~HANDLE_REQUEST.
+
+*& ===============================================
+*& @Author: Brenton O'Callaghan
+*& @Date: 11th Aug 2014
+*& @Description:
+*&    As part of a Fiori implementation I wanted to implement the "news" tile on the home page.
+*&    The new tile reads an RSS feed and displays a summary of that feed. However it is subject to
+*&    The cross-domain-origin policy so I created this simple reverse proxy for the Bluefin RSS feed
+*&    to allow me to implement the tile without much effort.
+*& ===============================================
+
+* The URL of the RSS feed.
+DATA: LC_RSS_URL TYPE STRING value 'http://www.bluefinsolutions.com/rss/'.
+
+* The HTTP request object - used for sending the request to the Bluefin Website.
+DATA: lo_http_client    TYPE REF TO if_http_client.
+
+* A string for storing any error text from the request.
+DATA: lv_error type string value 'OK'.
+
+* First we create a new HTTP object using our URL as an initialisation value.
+CALL METHOD cl_http_client=>create_by_url
+  EXPORTING
+    url                = LC_RSS_URL
+  IMPORTING
+    client             = lo_http_client
+  EXCEPTIONS
+    argument_not_found = 1
+    plugin_not_active  = 2
+    internal_error     = 3
+    others             = 4.
+
+* If the creation was successful then we continue.
+if sy-subrc = 0.
+
+  " Send the request to the remote server.
+  CALL METHOD lo_http_client->send
+    EXCEPTIONS
+      http_communication_failure = 1
+      http_invalid_state         = 2.
+
+  " Read the response from the server.
+  CALL METHOD lo_http_client->receive
+    EXCEPTIONS
+      http_communication_failure = 1
+      http_invalid_state         = 2
+      http_processing_failed     = 3.
+
+    " If we successfully read the response
+    if sy-subrc = 0.
+
+      " Setup the 200 OK response code.
+      server->response->set_status(
+      code = 200
+      reason = 'OK' ).
+
+      " The content type should be XML
+      server->response->SET_CONTENT_TYPE(
+        'application/xml; charset=utf-8'
+      ).
+
+      " And finally, include the data from the request.
+      server->response->SET_DATA(
+        lo_http_client->response->get_data( )
+       ).
+
+    else.
+
+      " Otherwise if we have no response to read, we error.
+      CALL METHOD LO_HTTP_CLIENT->GET_LAST_ERROR
+        IMPORTING
+          MESSAGE        = lv_error.
+
+      " Set the response to 500 and include the error.
+      server->response->set_status(
+      code = 500
+      reason = lv_error ).
+
+    endif.
+else.
+
+    " Set the response to 500 and include the error.
+    server->response->set_status(
+    code = 500
+    reason = 'INTERNAL_ERROR_HTTP_OBJ_FAILED' ).
+endif.
+
+  endmethod.
